@@ -270,3 +270,36 @@ canvas {
     font-size: 1.2rem;
   }
 }
+
+/* Undo snackbar */
+.snackbar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 9999;
+
+  display: none;
+  align-items: center;
+  gap: 12px;
+
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+.snackbar.show { display: flex; }
+
+.snackbar button {
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  background: var(--nav-btn);
+  color: var(--header-text);
+}
+
+.snackbar button:hover { background: var(--nav-btn-hover); }
+.snackbar .muted { opacity: 0.75; font-size: 13px; }
