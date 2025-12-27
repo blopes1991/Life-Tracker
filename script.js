@@ -225,7 +225,7 @@ document.querySelectorAll("nav button").forEach((btn) => {
 // WEIGHT (with goal + chart + correct progress updates)
 // --------------------
 
-show("weight");
+show("todo");
 // One global resize handler (do NOT add this inside renderWeight)
 let weightResizeTimer = null;
 window.addEventListener("resize", () => {
@@ -355,92 +355,186 @@ function renderWeight() {
 
 
   function loadWeights() {
-  const list = document.getElementById("weightList");
-  const data = getWeights();
-
-  if (data.length === 0) {
-    list.innerHTML = `<li style="opacity:.7;">No entries yet.</li>`;
-    drawWeightChart([]);
+    const list = document.getElementById("weightList");
+    const data = getWeights();
+  
+    if (!list) return;
+  
+    if (data.length === 0) {
+      list.innerHTML = `<li style="opacity:.7;">No entries yet.</li>`;
+      drawWeightChart([]);
+      updateWeightProgress();
+      return;
+    }
+  
+    // UI state for month collapse
+    const ui = getWeightUIState();
+    ui.monthOpen ??= {};
+  
+    // newest first for display
+    const display = [...data].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  
+    // group by monthKey = YYYY-MM
+    const groups = {};
+    display.forEach((w) => {
+      const monthKey = String(w.date || "").slice(0, 7);
+      const key = /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : "Unknown";
+      groups[key] ??= [];
+      groups[key].push(w);
+    });
+  
+    const monthKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+    const idSafe = (key) => String(key).replace(/[^a-zA-Z0-9_-]/g, "_");
+  
+    // default: newest month open, others closed (only if never set before)
+    if (monthKeys.length && ui.monthOpen[monthKeys[0]] == null) {
+      monthKeys.forEach((k, idx) => {
+        if (ui.monthOpen[k] == null) ui.monthOpen[k] = idx === 0;
+      });
+      saveWeightUIState(ui);
+    }
+  
+    const monthLabelFromKey = (monthKey) => {
+      if (monthKey === "Unknown") return "Unknown Month";
+      const d = new Date(monthKey + "-01T00:00:00");
+      return d.toLocaleString(undefined, { month: "long", year: "numeric" });
+    };
+  
+    // render month folders
+    list.innerHTML = monthKeys
+      .map((monthKey) => {
+        const safe = idSafe(monthKey);
+        const isOpen = ui.monthOpen[monthKey] ?? true;
+  
+        const rows = groups[monthKey]
+          .map(
+            (w) => `
+            <div style="border:1px solid #ddd; border-radius:8px; padding:10px; background:#fff; display:grid; gap:8px;">
+              <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                <div>
+                  <b>${escapeHtml(w.date)}</b>
+                  <span style="opacity:.8;">—</span>
+                  <span>${w.weight}</span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button id="weight-edit-${w.id}">Edit</button>
+                  <button id="weight-del-${w.id}" style="background:#ef4444; color:white;">Delete</button>
+                </div>
+              </div>
+  
+              <div id="weight-editrow-${w.id}" style="display:none; gap:8px; align-items:end; flex-wrap:wrap;">
+                <label style="display:grid; gap:4px;">
+                  <span style="font-size:12px; opacity:.8;">Date</span>
+                  <input id="weight-editdate-${w.id}" type="date" value="${escapeHtml(w.date)}" />
+                </label>
+                <label style="display:grid; gap:4px;">
+                  <span style="font-size:12px; opacity:.8;">Weight</span>
+                  <input id="weight-editval-${w.id}" type="number" inputmode="decimal" value="${w.weight}" />
+                </label>
+                <button id="weight-save-${w.id}">Save</button>
+                <button id="weight-cancel-${w.id}">Cancel</button>
+              </div>
+            </div>
+          `
+          )
+          .join("");
+  
+        return `
+          <li style="list-style:none; border:1px solid #e5e7eb; border-radius:12px; background:#fff; overflow:hidden;">
+            <div
+              id="wt-month-${safe}"
+              style="padding:10px 12px; background:#f3f4f6; font-weight:700; cursor:pointer;
+                     display:flex; align-items:center; justify-content:space-between; gap:10px; user-select:none;"
+            >
+              <span>
+                ${escapeHtml(monthLabelFromKey(monthKey))}
+                <span style="font-weight:400; opacity:.75;"> (${groups[monthKey].length})</span>
+              </span>
+              <span id="wt-caret-${safe}" style="opacity:.75; font-weight:700;">
+                ${isOpen ? "▾" : "▸"}
+              </span>
+            </div>
+  
+            <div
+              id="wt-body-${safe}"
+              style="padding:10px 12px; display:${isOpen ? "grid" : "none"}; gap:10px;"
+            >
+              ${rows}
+            </div>
+          </li>
+        `;
+      })
+      .join("");
+  
+    // toggle month open/closed (no full rerender needed)
+    monthKeys.forEach((monthKey) => {
+      const safe = idSafe(monthKey);
+      const header = document.getElementById(`wt-month-${safe}`);
+      const body = document.getElementById(`wt-body-${safe}`);
+      const caret = document.getElementById(`wt-caret-${safe}`);
+  
+      header?.addEventListener("click", () => {
+        const nextOpen = !(ui.monthOpen[monthKey] ?? true);
+        ui.monthOpen[monthKey] = nextOpen;
+  
+        if (body) body.style.display = nextOpen ? "grid" : "none";
+        if (caret) caret.textContent = nextOpen ? "▾" : "▸";
+  
+        saveWeightUIState(ui);
+      });
+    });
+  
+    // wire up edit/delete handlers for each entry (works even if month is collapsed)
+    display.forEach((w) => {
+      document.getElementById(`weight-del-${w.id}`)?.addEventListener("click", () => {
+        const ok = confirm("Are you sure you want to delete this weight entry?");
+        if (!ok) return;
+  
+        const next = getWeights().filter((x) => x.id !== w.id);
+        localStorage.setItem("weights", JSON.stringify(next));
+        if (typeof cloudQueueWrite === "function") cloudQueueWrite("weights", next);
+        loadWeights();
+      });
+  
+      document.getElementById(`weight-edit-${w.id}`)?.addEventListener("click", () => {
+        const row = document.getElementById(`weight-editrow-${w.id}`);
+        if (!row) return;
+        row.style.display = row.style.display === "none" ? "flex" : "none";
+      });
+  
+      document.getElementById(`weight-cancel-${w.id}`)?.addEventListener("click", () => {
+        const row = document.getElementById(`weight-editrow-${w.id}`);
+        if (row) row.style.display = "none";
+      });
+  
+      document.getElementById(`weight-save-${w.id}`)?.addEventListener("click", () => {
+        const newDate = document.getElementById(`weight-editdate-${w.id}`)?.value;
+        const newValRaw = document.getElementById(`weight-editval-${w.id}`)?.value;
+        const newVal = Number(newValRaw);
+  
+        if (!newDate) return;
+        if (!Number.isFinite(newVal)) return;
+  
+        const next = getWeights().map((x) => (x.id === w.id ? { ...x, date: newDate, weight: newVal } : x));
+        localStorage.setItem("weights", JSON.stringify(next));
+        if (typeof cloudQueueWrite === "function") cloudQueueWrite("weights", next);
+        loadWeights();
+      });
+    });
+  
+    // chart + progress should reflect all entries
+    drawWeightChart(data);
     updateWeightProgress();
-    return;
   }
-
-  // display newest first
-  const display = [...data].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-
-  list.innerHTML = display
-    .map(
-      (w) => `
-      <li style="border:1px solid #ddd; border-radius:8px; padding:10px; background:#fff; display:grid; gap:8px;">
-        <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-          <div>
-            <b>${escapeHtml(w.date)}</b>
-            <span style="opacity:.8;">—</span>
-            <span>${w.weight}</span>
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button id="weight-edit-${w.id}">Edit</button>
-            <button id="weight-del-${w.id}" style="background:#ef4444; color:white;">Delete</button>
-          </div>
-        </div>
-
-        <div id="weight-editrow-${w.id}" style="display:none; gap:8px; align-items:end; flex-wrap:wrap;">
-          <label style="display:grid; gap:4px;">
-            <span style="font-size:12px; opacity:.8;">Date</span>
-            <input id="weight-editdate-${w.id}" type="date" value="${escapeHtml(w.date)}" />
-          </label>
-          <label style="display:grid; gap:4px;">
-            <span style="font-size:12px; opacity:.8;">Weight</span>
-            <input id="weight-editval-${w.id}" type="number" inputmode="decimal" value="${w.weight}" />
-          </label>
-          <button id="weight-save-${w.id}">Save</button>
-          <button id="weight-cancel-${w.id}">Cancel</button>
-        </div>
-      </li>
-    `
-    )
-    .join("");
-
-  // wire up buttons (use the canonical data from storage each time)
-  display.forEach((w) => {
-    document.getElementById(`weight-del-${w.id}`).addEventListener("click", () => {
-      const next = getWeights().filter((x) => x.id !== w.id);
-      localStorage.setItem("weights", JSON.stringify(next));
-      if (typeof cloudQueueWrite === "function") cloudQueueWrite("weights", next);
-      loadWeights();
-    });
-    
-
-    document.getElementById(`weight-edit-${w.id}`).addEventListener("click", () => {
-      const row = document.getElementById(`weight-editrow-${w.id}`);
-      row.style.display = row.style.display === "none" ? "flex" : "none";
-    });
-
-    document.getElementById(`weight-cancel-${w.id}`).addEventListener("click", () => {
-      document.getElementById(`weight-editrow-${w.id}`).style.display = "none";
-    });
-
-    document.getElementById(`weight-save-${w.id}`).addEventListener("click", () => {
-      const newDate = document.getElementById(`weight-editdate-${w.id}`).value;
-      const newValRaw = document.getElementById(`weight-editval-${w.id}`).value;
-      const newVal = Number(newValRaw);
-
-      if (!newDate) return;
-      if (!Number.isFinite(newVal)) return;
-
-      const next = getWeights().map((x) => (x.id === w.id ? { ...x, date: newDate, weight: newVal } : x));
-
-      localStorage.setItem("weights", JSON.stringify(next));
-      if (typeof cloudQueueWrite === "function") cloudQueueWrite("weights", next);
-      loadWeights();
-
-    });
-  });
-
-  drawWeightChart(data);
-  updateWeightProgress();
-}
-
+  
+  function getWeightUIState() {
+    return JSON.parse(localStorage.getItem("weightUI") || JSON.stringify({ monthOpen: {} }));
+  }
+  
+  function saveWeightUIState(ui) {
+    localStorage.setItem("weightUI", JSON.stringify(ui));
+  }
+  
 function updateWeightProgress() {
   const el1 = document.getElementById("weightProgress");
   const el2 = document.getElementById("weightProgress2");
@@ -739,6 +833,10 @@ function renderHabits() {
         <button id="prevRangeBtn">◀</button>
         <button id="todayBtn">Today</button>
         <button id="nextRangeBtn">▶</button>
+
+        <button id="clearHabitsBtn" style="background:#ef4444;color:white;">
+          Clear all
+        </button>
       </div>
 
       <div style="opacity:.8; margin-bottom:10px;"><b>${headerLabel}</b></div>
@@ -792,6 +890,15 @@ function renderHabits() {
     renderHabits();
   });
 
+  // Clear ALL checks (across all dates)
+  document.getElementById("clearHabitsBtn").addEventListener("click", () => {
+    if (!confirm("Clear ALL checked boxes for ALL dates?")) return;
+
+    state.completedByDate = {};
+    saveHabitsState(state);
+    renderHabits();
+  });
+
   // Change mode
   modeSel.addEventListener("change", () => {
     state.ui.mode = modeSel.value;
@@ -828,6 +935,15 @@ function renderHabits() {
       cb.addEventListener("change", (e) => {
         state.completedByDate[dateKey] ??= {};
         state.completedByDate[dateKey][habit.id] = e.target.checked;
+
+        // optional cleanup: if unchecked, remove key; if date becomes empty, remove date
+        if (!e.target.checked) {
+          delete state.completedByDate[dateKey][habit.id];
+          if (Object.keys(state.completedByDate[dateKey]).length === 0) {
+            delete state.completedByDate[dateKey];
+          }
+        }
+
         saveHabitsState(state);
       });
     });
@@ -836,6 +952,17 @@ function renderHabits() {
     if (del) {
       del.addEventListener("click", () => {
         state.habits = state.habits.filter((x) => x.id !== habit.id);
+
+        // cleanup completion map for this habit
+        for (const dateKey of Object.keys(state.completedByDate)) {
+          if (state.completedByDate?.[dateKey]?.[habit.id] != null) {
+            delete state.completedByDate[dateKey][habit.id];
+            if (Object.keys(state.completedByDate[dateKey]).length === 0) {
+              delete state.completedByDate[dateKey];
+            }
+          }
+        }
+
         saveHabitsState(state);
         renderHabits();
       });
@@ -862,7 +989,6 @@ function saveHabitsState(state) {
     cloudQueueWrite("habitsState", state);
   }
 }
-
 
 // ---- Habits grid helpers
 function habitRowGridHTML(habit, state, dates) {
@@ -952,6 +1078,7 @@ function escapeHtml(str) {
     }[m])
   );
 }
+
 
 // --------------------
 // GOALS (set progress, not add)
@@ -1056,10 +1183,21 @@ function renderGoalsList(state) {
 
     // Delete
     document.getElementById(`goal-del-${g.id}`).addEventListener("click", () => {
+      const removed = state.goals.find((x) => x.id === g.id);
+      if (!removed) return;
+    
       state.goals = state.goals.filter((x) => x.id !== g.id);
       saveGoalsState(state);
       renderGoals();
+    
+      showUndo("Goal deleted.", () => {
+        state.goals.unshift(removed);
+        saveGoalsState(state);
+        renderGoals();
+      });
     });
+    
+    
 
     // Toggle edit
     document.getElementById(`goal-edit-${g.id}`).addEventListener("click", () => {
@@ -1194,6 +1332,8 @@ function saveGoalsState(state) {
 // --------------------
 function renderJournal() {
   const state = getJournalState();
+  state.ui ??= { search: "", monthOpen: {} };
+  state.ui.monthOpen ??= {};
 
   app.innerHTML = `
     <div class="card">
@@ -1276,7 +1416,7 @@ function renderJournal() {
     renderJournal();
   });
 
-  // render folders
+  // render folders (THIS is the only call you need)
   renderJournalFolders(state);
 
   // set search field value after re-render
@@ -1285,6 +1425,9 @@ function renderJournal() {
 
 function renderJournalFolders(state) {
   const wrap = document.getElementById("jrFolders");
+
+  state.ui ??= { search: "", monthOpen: {} };
+  state.ui.monthOpen ??= {};
 
   const search = (state.ui.search || "").trim().toLowerCase();
 
@@ -1307,20 +1450,41 @@ function renderJournalFolders(state) {
   }
 
   const groups = groupEntriesByMonth(filtered); // { "YYYY-MM": [entries...] }
+  const monthKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a)); // newest month first
 
-  wrap.innerHTML = Object.keys(groups)
-    .sort((a, b) => b.localeCompare(a)) // newest month first
+  const idSafe = (key) => String(key).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  wrap.innerHTML = monthKeys
     .map((monthKey) => {
+      const safe = idSafe(monthKey);
       const label = monthLabelFromKey(monthKey);
+
+      // If searching, force open so results are visible.
+      const isOpen = search ? true : (state.ui.monthOpen[monthKey] ?? true);
+
+      // Always render items; just hide the container. (prevents missing DOM issues)
       const items = groups[monthKey].map((e) => journalEntryHTML(e)).join("");
 
       return `
         <div style="border:1px solid #e5e7eb; border-radius:12px; background:#fff; overflow:hidden;">
-          <div style="padding:10px 12px; background:#f3f4f6; font-weight:700;">
-            ${escapeHtml(label)}
-            <span style="font-weight:400; opacity:.75;"> (${groups[monthKey].length})</span>
+          <div
+            id="jr-month-${safe}"
+            style="padding:10px 12px; background:#f3f4f6; font-weight:700; cursor:pointer;
+                   display:flex; align-items:center; justify-content:space-between; gap:10px; user-select:none;"
+          >
+            <span>
+              ${escapeHtml(label)}
+              <span style="font-weight:400; opacity:.75;"> (${groups[monthKey].length})</span>
+            </span>
+            <span id="jr-month-caret-${safe}" style="opacity:.75; font-weight:700;">
+              ${isOpen ? "▾" : "▸"}
+            </span>
           </div>
-          <div style="padding:10px 12px; display:grid; gap:10px;">
+
+          <div
+            id="jr-month-body-${safe}"
+            style="padding:10px 12px; display:${isOpen ? "grid" : "none"}; gap:10px;"
+          >
             ${items}
           </div>
         </div>
@@ -1328,7 +1492,28 @@ function renderJournalFolders(state) {
     })
     .join("");
 
-  // wire up events
+  // Month open/close handlers (no full re-render required)
+  monthKeys.forEach((monthKey) => {
+    const safe = idSafe(monthKey);
+    const header = document.getElementById(`jr-month-${safe}`);
+    const body = document.getElementById(`jr-month-body-${safe}`);
+    const caret = document.getElementById(`jr-month-caret-${safe}`);
+
+    header?.addEventListener("click", () => {
+      // Keep open while searching
+      if ((state.ui.search || "").trim()) return;
+
+      const nextOpen = !(state.ui.monthOpen[monthKey] ?? true);
+      state.ui.monthOpen[monthKey] = nextOpen;
+
+      if (body) body.style.display = nextOpen ? "grid" : "none";
+      if (caret) caret.textContent = nextOpen ? "▾" : "▸";
+
+      saveJournalState(state);
+    });
+  });
+
+  // wire up entry events
   filtered.forEach((e) => {
     const toggle = document.getElementById(`jr-toggle-${e.id}`);
     const del = document.getElementById(`jr-del-${e.id}`);
@@ -1345,10 +1530,21 @@ function renderJournalFolders(state) {
     });
 
     del?.addEventListener("click", () => {
+      const removed = state.entries.find((x) => x.id === e.id);
+      if (!removed) return;
+    
       state.entries = state.entries.filter((x) => x.id !== e.id);
       saveJournalState(state);
       renderJournal();
+    
+      showUndo("Journal entry deleted.", () => {
+        state.entries.unshift(removed);
+        saveJournalState(state);
+        renderJournal();
+      });
     });
+    
+    
 
     edit?.addEventListener("click", () => {
       const row = document.getElementById(`jr-editrow-${e.id}`);
@@ -1464,7 +1660,7 @@ function getJournalState() {
     localStorage.getItem("journalState") ||
       JSON.stringify({
         entries: [],
-        ui: { search: "" },
+        ui: { search: "", monthOpen: {} },
       })
   );
 }
@@ -1473,6 +1669,7 @@ function saveJournalState(state) {
   localStorage.setItem("journalState", JSON.stringify(state));
   if (typeof cloudQueueWrite === "function") cloudQueueWrite("journalState", state);
 }
+
 
 
 // --------------------
@@ -1829,13 +2026,32 @@ function wireTodoEvents(state) {
     }
 
     const del = document.getElementById(`todo-del-${item.id}`);
-    if (del) {
-      del.addEventListener("click", () => {
-        state.items = state.items.filter((x) => x.id !== item.id);
-        saveTodoState(state);
-        renderTodo();
-      });
+if (del) {
+  del.addEventListener("click", () => {
+    // Completed tasks: delete immediately (no undo)
+    if (item.completed) {
+      state.items = state.items.filter((x) => x.id !== item.id);
+      saveTodoState(state);
+      renderTodo();
+      return;
     }
+
+    // Active tasks: delete with Undo
+    const removed = state.items.find((x) => x.id === item.id);
+    if (!removed) return;
+
+    state.items = state.items.filter((x) => x.id !== item.id);
+    saveTodoState(state);
+    renderTodo();
+
+    showUndo("To-do deleted.", () => {
+      state.items.push(removed);
+      saveTodoState(state);
+      renderTodo();
+    });
+  });
+}
+
   });
 }
 
@@ -1959,3 +2175,53 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+// --------------------
+// Undo Snackbar (global)
+// --------------------
+let _snack = { el: null, timer: null, undoFn: null };
+
+function ensureSnackbar() {
+  if (_snack.el) return _snack.el;
+
+  const el = document.createElement("div");
+  el.className = "snackbar";
+  el.innerHTML = `
+    <span id="snackMsg" class="muted">Deleted.</span>
+    <button id="snackUndoBtn" type="button">Undo</button>
+  `;
+  document.body.appendChild(el);
+
+  const undoBtn = el.querySelector("#snackUndoBtn");
+  undoBtn.addEventListener("click", () => {
+    if (typeof _snack.undoFn === "function") _snack.undoFn();
+    hideSnackbar();
+  });
+
+  _snack.el = el;
+  return el;
+}
+
+function showUndo(message, onUndo, timeoutMs = 10000) {
+  ensureSnackbar();
+
+  // If another snackbar is open, close it and finalize by doing nothing
+  if (_snack.timer) clearTimeout(_snack.timer);
+
+  _snack.undoFn = onUndo;
+
+  _snack.el.querySelector("#snackMsg").textContent = message;
+  _snack.el.classList.add("show");
+
+  _snack.timer = setTimeout(() => {
+    hideSnackbar();
+  }, timeoutMs);
+}
+
+function hideSnackbar() {
+  if (!_snack.el) return;
+  if (_snack.timer) clearTimeout(_snack.timer);
+  _snack.timer = null;
+  _snack.undoFn = null;
+  _snack.el.classList.remove("show");
+}
