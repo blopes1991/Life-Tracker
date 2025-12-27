@@ -186,6 +186,18 @@ input:focus, select:focus, textarea:focus {
 [data-theme="dark"] h2,
 [data-theme="dark"] h3,
 [data-theme="dark"] h4 { color: var(--text-strong); }
+/* Priority headers — override dark theme heading color */
+[data-theme="dark"] .priority-high {
+  color: #ef4444 !important;
+}
+
+[data-theme="dark"] .priority-medium {
+  color: #facc15 !important;
+}
+
+[data-theme="dark"] .priority-low {
+  color: #22c55e !important;
+}
 
 [data-theme="dark"] label,
 [data-theme="dark"] strong { color: var(--text-main); }
@@ -303,3 +315,16 @@ canvas {
 
 .snackbar button:hover { background: var(--nav-btn-hover); }
 .snackbar .muted { opacity: 0.75; font-size: 13px; }
+
+/* Priority section headers */
+.priority-high {
+  color: #ef4444; /* red */
+}
+
+.priority-medium {
+  color: #facc15; /* yellow */
+}
+
+.priority-low {
+  color: #22c55e; /* green */
+}
