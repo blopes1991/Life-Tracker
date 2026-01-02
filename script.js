@@ -261,18 +261,24 @@ function renderWeight() {
       </div>
 
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
-        <label style="display:grid; gap:4px;">
-          <span style="font-size:12px; opacity:.8;">Date</span>
-          <input id="weightDate" type="date" />
-        </label>
+      <label style="display:grid; gap:4px;">
+        <span style="font-size:12px; opacity:.8;">Date</span>
+        <input id="weightDate" type="date" />
+      </label>
 
-        <label style="display:grid; gap:4px;">
-          <span style="font-size:12px; opacity:.8;">Weight</span>
-          <input id="weightInput" type="number" inputmode="decimal" placeholder="e.g. 185.4" />
-        </label>
+      <label style="display:grid; gap:4px;">
+        <span style="font-size:12px; opacity:.8;">Weight</span>
+        <input id="weightInput" type="number" inputmode="decimal" placeholder="e.g. 185.4" />
+      </label>
 
-        <button id="addWeightBtn">Add</button>
-      </div>
+      <label style="display:grid; gap:4px; flex:1; min-width:220px;">
+        <span style="font-size:12px; opacity:.8;">Note (optional)</span>
+        <input id="weightNote" placeholder="e.g. salty meal / gym day / sick" />
+      </label>
+
+      <button id="addWeightBtn">Add</button>
+    </div>
+
 
       <div style="margin-top:12px;">
         <!-- Important: give canvas an explicit CSS height; do NOT rely on canvas.height for layout -->
@@ -325,11 +331,45 @@ function renderWeight() {
   });
     
   loadWeights();
+  const canvas = document.getElementById("weightChart");
+  canvas?.addEventListener("click", (e) => {
+    const points = window.__weightChartPoints || [];
+    if (!points.length) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // nearest point within radius
+    let best = null;
+    let bestDist = 999999;
+    for (const p of points) {
+      const dx = mx - p.x;
+      const dy = my - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist) {
+        bestDist = d2;
+        best = p;
+      }
+    }
+
+    const hitRadius = 10;
+    if (!best || bestDist > hitRadius * hitRadius) return;
+
+    const ui = getWeightChartUI();
+    ui.openNoteIds ??= {};
+    ui.openNoteIds[best.id] = !ui.openNoteIds[best.id];
+    saveWeightChartUI(ui);
+
+    drawWeightChart(getWeights());
+  });
+
   }
   
   function addWeight() {
     const date = document.getElementById("weightDate").value;
     const weightRaw = document.getElementById("weightInput").value;
+    const note = (document.getElementById("weightNote")?.value || "").trim();
   
     if (!date) return;
     if (!weightRaw) return;
@@ -342,17 +382,17 @@ function renderWeight() {
       id: crypto.randomUUID(),
       date,   // YYYY-MM-DD
       weight, // number
+      note,   // string
     });
   
-    // FIX: use `data` (not `next`)
     localStorage.setItem("weights", JSON.stringify(data));
     if (typeof cloudQueueWrite === "function") cloudQueueWrite("weights", data);
   
     document.getElementById("weightInput").value = "";
-    loadWeights();
-  }
+    if (document.getElementById("weightNote")) document.getElementById("weightNote").value = "";
   
-
+    loadWeights();
+  }  
 
   function loadWeights() {
     const list = document.getElementById("weightList");
@@ -526,6 +566,12 @@ function renderWeight() {
     drawWeightChart(data);
     updateWeightProgress();
   }
+  function getWeightChartUI() {
+    return JSON.parse(localStorage.getItem("weightChartUI") || JSON.stringify({ openNoteIds: {} }));
+  }
+  function saveWeightChartUI(ui) {
+    localStorage.setItem("weightChartUI", JSON.stringify(ui));
+  }
   
   function getWeightUIState() {
     return JSON.parse(localStorage.getItem("weightUI") || JSON.stringify({ monthOpen: {} }));
@@ -535,7 +581,8 @@ function renderWeight() {
     localStorage.setItem("weightUI", JSON.stringify(ui));
   }
   
-function updateWeightProgress() {
+
+  function updateWeightProgress() {
   const el1 = document.getElementById("weightProgress");
   const el2 = document.getElementById("weightProgress2");
   if (!el1 || !el2) return;
@@ -592,19 +639,27 @@ function updateWeightProgress() {
 }
 
 function getWeights() {
-  // supports older entries that used {value, date}
   const raw = JSON.parse(localStorage.getItem("weights") || "[]");
   return raw
     .map((x) => {
-      if (x && x.weight != null) return x;
+      if (x && x.weight != null) {
+        return {
+          id: x.id || crypto.randomUUID(),
+          date: normalizeLegacyDate(x.date),
+          weight: Number(x.weight),
+          note: typeof x.note === "string" ? x.note : "",
+        };
+      }
       return {
         id: (x && x.id) || crypto.randomUUID(),
         date: normalizeLegacyDate(x && x.date),
         weight: Number(x && x.value),
+        note: "",
       };
     })
     .filter((x) => x && typeof x.date === "string" && Number.isFinite(x.weight));
 }
+
 
 function normalizeLegacyDate(dateStr) {
   if (typeof dateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
@@ -754,41 +809,84 @@ function drawWeightChart(entries) {
   });
   ctx.stroke();
 
-  // dots + labels
-  ctx.fillStyle = dotColor;
-  const labelFont = "11px Inter, system-ui, sans-serif";
-  const labelPad = 6;
-
-  sorted.forEach((d) => {
-    const x = xScale(d.t);
-    const y = yScale(d.weight);
-
-    // dot
-    ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // label (weight next to dot)
-    const text = Number.isFinite(d.weight) ? d.weight.toFixed(1) : String(d.weight);
-    ctx.font = labelFont;
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = textMain;
-
-    const textW = ctx.measureText(text).width;
-    let tx = x + labelPad;
-    if (tx + textW > displayWidth - padR) tx = x - labelPad - textW;
-
-    let ty = y;
-    const topClamp = padT + 8;
-    const bottomClamp = displayHeight - padB - 8;
-    if (ty < topClamp) ty = topClamp;
-    if (ty > bottomClamp) ty = bottomClamp;
-
-    ctx.fillText(text, tx, ty);
-
-    // restore fill for next dot
+    // dots + labels + (optional) notes
+    const chartUI = getWeightChartUI();
+    chartUI.openNoteIds ??= {};
+  
     ctx.fillStyle = dotColor;
-  });
+    const labelFont = "11px Inter, system-ui, sans-serif";
+    const noteFont = "10px Inter, system-ui, sans-serif";
+    const labelPadX = 6;
+    const labelOffsetY = 8; // push weight label below the dot
+  
+    const points = [];
+  
+    sorted.forEach((d) => {
+      const x = xScale(d.t);
+      const y = yScale(d.weight);
+  
+      points.push({ id: d.id, x, y, note: d.note || "" });
+  
+      // dot
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+  
+      // weight label (UNDER dot)
+      const text = Number.isFinite(d.weight) ? d.weight.toFixed(1) : String(d.weight);
+      ctx.font = labelFont;
+      ctx.textBaseline = "top";
+      ctx.fillStyle = textMain;
+  
+      const textW = ctx.measureText(text).width;
+      let tx = x + labelPadX;
+      if (tx + textW > displayWidth - padR) tx = x - labelPadX - textW;
+  
+      // default: below dot
+      let ty = y + labelOffsetY;
+  
+      // if too low, flip above dot
+      const labelH = 12;
+      const bottomLimit = displayHeight - padB - 2;
+      if (ty + labelH > bottomLimit) ty = y - labelOffsetY - labelH;
+  
+      // clamp away from very top
+      const topLimit = padT + 2;
+      if (ty < topLimit) ty = topLimit;
+  
+      ctx.fillText(text, tx, ty);
+  
+      // note (only if open + exists)
+      const note = (d.note || "").trim();
+      if (note && chartUI.openNoteIds[d.id]) {
+        ctx.font = noteFont;
+        ctx.fillStyle = textMuted;
+        ctx.textBaseline = "top";
+  
+        const noteY = ty + labelH + 2;
+        // simple one-line clamp; if you want wrapping, say so
+        const maxW = Math.max(80, displayWidth - padR - tx);
+        let shown = note;
+        // crude shorten if super long
+        if (ctx.measureText(shown).width > maxW) {
+          while (shown.length > 0 && ctx.measureText(shown + "…").width > maxW) {
+            shown = shown.slice(0, -1);
+          }
+          shown = shown + "…";
+        }
+  
+        let finalY = noteY;
+        if (finalY + 12 > bottomLimit) finalY = ty - 14; // fallback
+        ctx.fillText(shown, tx, finalY);
+      }
+  
+      // restore dot fill
+      ctx.fillStyle = dotColor;
+    });
+  
+    // expose points for click detection
+    window.__weightChartPoints = points;
+  
 }
 
 
