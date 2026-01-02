@@ -328,3 +328,9 @@ canvas {
 .priority-low {
   color: #22c55e; /* green */
 }
+
+/* Habit dragging */
+.habit-drag-over td {
+  outline: 2px dashed var(--border);
+  outline-offset: -2px;
+}
