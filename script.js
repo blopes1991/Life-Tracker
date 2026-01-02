@@ -803,143 +803,143 @@ function renderHabits() {
   const today = new Date();
   const todayKey = today.toISOString().slice(0, 10);
 
-  // Persist UI settings in habitsState
-  state.ui ??= { mode: "week", anchor: todayKey };
-  if (!state.ui.mode) state.ui.mode = "week";
-  if (!state.ui.anchor) state.ui.anchor = todayKey;
+  // UI state
+  state.ui ??= {};
+  state.ui.mode ??= "folders";        // "folders" | "week" | "month"
+  state.ui.anchor ??= todayKey;       // used for week/month grids
+  state.ui.openYears ??= {};          // { "2025": true }
+  state.ui.openMonth ??= null;        // "YYYY-MM" currently expanded summary
 
   const ui = state.ui;
 
-  // Compute dates only for grid views
-  const dates =
-    ui.mode === "month" ? getMonthDates(ui.anchor) :
-    ui.mode === "week" ? getWeekDates(ui.anchor) :
-    [];
+  // ---------- GRID MODES (week/month) ----------
+  if (ui.mode === "week" || ui.mode === "month") {
+    const dates = ui.mode === "month" ? getMonthDates(ui.anchor) : getWeekDates(ui.anchor);
 
-  const headerLabel =
-    ui.mode === "month"
-      ? formatMonthLabel(ui.anchor)
-      : ui.mode === "week"
-      ? `Week of ${dates[0]} → ${dates[dates.length - 1]}`
-      : ui.mode === "monthSummary"
-      ? `Summary for ${formatMonthLabel(ui.anchor)}`
-      : `Year Summary (${new Date(ui.anchor + "T00:00:00").getFullYear()})`;
+    const headerLabel =
+      ui.mode === "month"
+        ? formatMonthLabel(ui.anchor)
+        : `Week of ${dates[0]} → ${dates[dates.length - 1]}`;
 
-  // Build the table HTML BEFORE injecting into the template
-  const tableHtml =
-    ui.mode === "monthSummary"
-      ? renderHabitsMonthSummary(state, ui)
-      : ui.mode === "yearSummary"
-      ? renderHabitsYearSummary(state, ui)
-      : renderHabitsGrid(state, ui, dates);
+    app.innerHTML = `
+      <div class="card">
+        <h2>Habits</h2>
 
-  app.innerHTML = `
-    <div class="card">
-      <h2>Habits</h2>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+          <input id="habitName" placeholder="New habit (e.g., Walk 20 min)" />
+          <button id="addHabitBtn">Add</button>
 
-      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
-        <input id="habitName" placeholder="New habit (e.g., Walk 20 min)" />
-        <button id="addHabitBtn">Add</button>
+          <div style="flex:1;"></div>
 
-        <div style="flex:1;"></div>
+          <button id="foldersBtn">Folders</button>
+          <button id="weekBtn">Week</button>
+          <button id="monthBtn">Month</button>
 
-        <select id="habitMode">
-          <option value="week">Week</option>
-          <option value="month">Month (days)</option>
-          <option value="monthSummary">Month (summary)</option>
-          <option value="yearSummary">Year (summary)</option>
-        </select>
+          <button id="prevRangeBtn">◀</button>
+          <button id="todayBtn">Today</button>
+          <button id="nextRangeBtn">▶</button>
 
-        <button id="prevRangeBtn">◀</button>
-        <button id="todayBtn">Today</button>
-        <button id="nextRangeBtn">▶</button>
+          <button id="clearHabitsBtn" style="background:#ef4444;color:white;">
+            Clear all
+          </button>
+        </div>
 
-        <button id="clearHabitsBtn" style="background:#ef4444;color:white;">
-          Clear all
-        </button>
+        <div style="opacity:.8; margin-bottom:10px;"><b>${headerLabel}</b></div>
+
+        <div style="overflow:auto; border:1px solid var(--border); border-radius:10px; background:var(--card);">
+          <table style="border-collapse:collapse; min-width:720px; width:100%;">
+            <thead>
+              <tr>
+                <th style="text-align:left; padding:10px; position:sticky; left:0; background:var(--card); border-bottom:1px solid var(--border);">
+                  Habit
+                </th>
+                ${dates
+                  .map(
+                    (d) => `
+                      <th style="padding:10px; text-align:center; border-bottom:1px solid var(--border); white-space:nowrap; background:var(--card);">
+                        ${formatDayHeader(d, ui.mode)}
+                      </th>
+                    `
+                  )
+                  .join("")}
+                <th style="padding:10px; text-align:center; border-bottom:1px solid var(--border); background:var(--card);">Delete</th>
+              </tr>
+            </thead>
+
+            <tbody id="habitsTbody">
+              ${
+                state.habits.length
+                  ? state.habits.map((h) => habitRowGridHTML(h, state, dates)).join("")
+                  : `<tr><td colspan="${dates.length + 2}" style="padding:12px; opacity:.7;">No habits yet. Add one above.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <p style="font-size:12px; opacity:.75; margin-top:10px;">
+          Tip: Drag the ⋮⋮ handle to reorder habits.
+        </p>
       </div>
+    `;
 
-      <div style="opacity:.8; margin-bottom:10px;"><b>${headerLabel}</b></div>
-
-      ${tableHtml}
-
-      <p style="font-size:12px; opacity:.75; margin-top:10px;">
-        Tip: Use Month/Year summary to reduce clutter. Click a month to open the full day grid.
-      </p>
-    </div>
-  `;
-
-  // set dropdown
-  const modeSel = document.getElementById("habitMode");
-  modeSel.value = ui.mode;
-
-  // Add habit
-  document.getElementById("addHabitBtn").addEventListener("click", () => {
-    const input = document.getElementById("habitName");
-    const name = input.value.trim();
-    if (!name) return;
-
-    state.habits.push({ id: crypto.randomUUID(), name });
-    input.value = "";
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  // Clear all checks (all dates)
-  document.getElementById("clearHabitsBtn").addEventListener("click", () => {
-    if (!confirm("Clear ALL checked boxes for ALL dates?")) return;
-    state.completedByDate = {};
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  // Mode change
-  modeSel.addEventListener("change", () => {
-    state.ui.mode = modeSel.value;
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  // Today
-  document.getElementById("todayBtn").addEventListener("click", () => {
-    state.ui.anchor = todayKey;
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  // Prev/Next: week shifts by 7 days; month/year shifts by 1 month/year
-  document.getElementById("prevRangeBtn").addEventListener("click", () => {
-    if (state.ui.mode === "week") state.ui.anchor = shiftDays(state.ui.anchor, -7);
-    else if (state.ui.mode === "month" || state.ui.mode === "monthSummary") state.ui.anchor = shiftMonth(state.ui.anchor, -1);
-    else state.ui.anchor = shiftYear(state.ui.anchor, -1);
-
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  document.getElementById("nextRangeBtn").addEventListener("click", () => {
-    if (state.ui.mode === "week") state.ui.anchor = shiftDays(state.ui.anchor, 7);
-    else if (state.ui.mode === "month" || state.ui.mode === "monthSummary") state.ui.anchor = shiftMonth(state.ui.anchor, 1);
-    else state.ui.anchor = shiftYear(state.ui.anchor, 1);
-
-    saveHabitsState(state);
-    renderHabits();
-  });
-
-  // Summary clicks -> open month day grid
-  document.querySelectorAll("[data-open-month]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const mk = btn.getAttribute("data-open-month"); // YYYY-MM
-      if (!mk) return;
-      state.ui.mode = "month";
-      state.ui.anchor = `${mk}-01`;
+    // top buttons
+    document.getElementById("foldersBtn").addEventListener("click", () => {
+      state.ui.mode = "folders";
       saveHabitsState(state);
       renderHabits();
     });
-  });
+    document.getElementById("weekBtn").addEventListener("click", () => {
+      state.ui.mode = "week";
+      saveHabitsState(state);
+      renderHabits();
+    });
+    document.getElementById("monthBtn").addEventListener("click", () => {
+      state.ui.mode = "month";
+      saveHabitsState(state);
+      renderHabits();
+    });
 
-  // Wire up grid checkboxes/deletes only in grid modes
-  if (ui.mode === "week" || ui.mode === "month") {
+    // Add habit
+    document.getElementById("addHabitBtn").addEventListener("click", () => {
+      const input = document.getElementById("habitName");
+      const name = input.value.trim();
+      if (!name) return;
+
+      state.habits.push({ id: crypto.randomUUID(), name });
+      input.value = "";
+      saveHabitsState(state);
+      renderHabits();
+    });
+
+    // Clear ALL checks
+    document.getElementById("clearHabitsBtn").addEventListener("click", () => {
+      if (!confirm("Clear ALL checked boxes for ALL dates?")) return;
+      state.completedByDate = {};
+      saveHabitsState(state);
+      renderHabits();
+    });
+
+    // Today
+    document.getElementById("todayBtn").addEventListener("click", () => {
+      state.ui.anchor = todayKey;
+      saveHabitsState(state);
+      renderHabits();
+    });
+
+    // Prev/Next range
+    document.getElementById("prevRangeBtn").addEventListener("click", () => {
+      state.ui.anchor = state.ui.mode === "month" ? shiftMonth(state.ui.anchor, -1) : shiftDays(state.ui.anchor, -7);
+      saveHabitsState(state);
+      renderHabits();
+    });
+
+    document.getElementById("nextRangeBtn").addEventListener("click", () => {
+      state.ui.anchor = state.ui.mode === "month" ? shiftMonth(state.ui.anchor, 1) : shiftDays(state.ui.anchor, 7);
+      saveHabitsState(state);
+      renderHabits();
+    });
+
+    // Wire up checkbox + delete handlers (your existing logic)
     state.habits.forEach((habit) => {
       dates.forEach((dateKey) => {
         const cb = document.getElementById(`habit-${habit.id}-${dateKey}`);
@@ -980,10 +980,249 @@ function renderHabits() {
       }
     });
 
-    // enable drag (grid only)
+    // drag wiring (you already have enableHabitsDrag in your file) :contentReference[oaicite:1]{index=1}
     enableHabitsDrag(state);
+
+    return;
   }
+
+  // ---------- FOLDERS MODE ----------
+  const years = getHabitYears(state);
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>Habits</h2>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+        <input id="habitName" placeholder="New habit (e.g., Walk 20 min)" />
+        <button id="addHabitBtn">Add</button>
+
+        <div style="flex:1;"></div>
+
+        <button id="weekBtn">Week</button>
+        <button id="monthBtn">Month</button>
+
+        <button id="clearHabitsBtn" style="background:#ef4444;color:white;">
+          Clear all
+        </button>
+      </div>
+
+      ${renderHabitsFolders(state, years)}
+    </div>
+  `;
+
+  document.getElementById("weekBtn").addEventListener("click", () => {
+    state.ui.mode = "week";
+    saveHabitsState(state);
+    renderHabits();
+  });
+  document.getElementById("monthBtn").addEventListener("click", () => {
+    state.ui.mode = "month";
+    saveHabitsState(state);
+    renderHabits();
+  });
+
+  // Add habit
+  document.getElementById("addHabitBtn").addEventListener("click", () => {
+    const input = document.getElementById("habitName");
+    const name = input.value.trim();
+    if (!name) return;
+
+    state.habits.push({ id: crypto.randomUUID(), name });
+    input.value = "";
+    saveHabitsState(state);
+    renderHabits();
+  });
+
+  // Clear ALL checks
+  document.getElementById("clearHabitsBtn").addEventListener("click", () => {
+    if (!confirm("Clear ALL checked boxes for ALL dates?")) return;
+    state.completedByDate = {};
+    saveHabitsState(state);
+    renderHabits();
+  });
+
+  // Toggle year open/closed
+  document.querySelectorAll("[data-year-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const y = btn.getAttribute("data-year-toggle");
+      if (!y) return;
+      state.ui.openYears[y] = !state.ui.openYears[y];
+      // collapsing a year should also close any open month inside it
+      if (!state.ui.openYears[y] && state.ui.openMonth?.startsWith(`${y}-`)) {
+        state.ui.openMonth = null;
+      }
+      saveHabitsState(state);
+      renderHabits();
+    });
+  });
+
+  // Toggle month summary open/closed
+  document.querySelectorAll("[data-month-toggle]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mk = btn.getAttribute("data-month-toggle"); // YYYY-MM
+      if (!mk) return;
+      state.ui.openMonth = state.ui.openMonth === mk ? null : mk;
+      saveHabitsState(state);
+      renderHabits();
+    });
+  });
+
+  // Open month day-grid
+  document.querySelectorAll("[data-open-month-grid]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const mk = btn.getAttribute("data-open-month-grid");
+      if (!mk) return;
+      state.ui.mode = "month";
+      state.ui.anchor = `${mk}-01`;
+      saveHabitsState(state);
+      renderHabits();
+    });
+  });
 }
+function getHabitYears(state) {
+  const keys = Object.keys(state.completedByDate || {});
+  const years = new Set(keys.map((k) => k.slice(0, 4)));
+  // If there are no completions yet, still show current year
+  years.add(new Date().getFullYear().toString());
+  return Array.from(years).sort((a, b) => Number(b) - Number(a));
+}
+
+function getMonthsInYearFromData(state, year) {
+  const keys = Object.keys(state.completedByDate || {});
+  const months = new Set(
+    keys
+      .filter((k) => k.startsWith(year + "-"))
+      .map((k) => k.slice(0, 7)) // YYYY-MM
+  );
+
+  // If no data for that year, show all months anyway
+  if (months.size === 0) {
+    for (let m = 1; m <= 12; m++) months.add(`${year}-${String(m).padStart(2, "0")}`);
+  }
+
+  return Array.from(months).sort(); // Jan..Dec
+}
+
+function renderHabitsFolders(state, years) {
+  const openMonth = state.ui.openMonth;
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      ${years
+        .map((y) => {
+          const isOpen = !!state.ui.openYears?.[y];
+          const months = isOpen ? getMonthsInYearFromData(state, y) : [];
+          return `
+            <div style="border:1px solid var(--border); border-radius:12px; background:var(--card); overflow:hidden;">
+              <button
+                data-year-toggle="${y}"
+                style="width:100%; text-align:left; padding:12px; background:var(--card); border:none; cursor:pointer; font-weight:600;"
+              >
+                ${isOpen ? "▾" : "▸"} ${y}
+              </button>
+
+              ${
+                isOpen
+                  ? `
+                    <div style="padding:10px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px;">
+                      ${months
+                        .map((mk) => {
+                          const label = monthLabel(mk);
+                          const monthOpen = openMonth === mk;
+                          return `
+                            <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden;">
+                              <button
+                                data-month-toggle="${mk}"
+                                style="width:100%; text-align:left; padding:10px; background:var(--card); border:none; cursor:pointer; font-weight:600;"
+                              >
+                                ${monthOpen ? "▾" : "▸"} ${label}
+                              </button>
+
+                              ${
+                                monthOpen
+                                  ? renderMonthSummaryPanel(state, mk)
+                                  : ""
+                              }
+                            </div>
+                          `;
+                        })
+                        .join("")}
+                    </div>
+                  `
+                  : ""
+              }
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMonthSummaryPanel(state, monthKey /* YYYY-MM */) {
+  const daysInMonth = getDaysInMonth(monthKey);
+
+  return `
+    <div style="padding:10px; border-top:1px solid var(--border);">
+      <div style="display:flex; justify-content:flex-end; margin-bottom:8px;">
+        <button data-open-month-grid="${monthKey}">Open day grid</button>
+      </div>
+
+      <div style="overflow:auto;">
+        <table style="border-collapse:collapse; width:100%;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Habit</th>
+              <th style="text-align:center; padding:8px; border-bottom:1px solid var(--border);">Done</th>
+              <th style="text-align:center; padding:8px; border-bottom:1px solid var(--border);">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              state.habits.length
+                ? state.habits
+                    .map((h) => {
+                      const done = countHabitDoneInMonth(state, h.id, monthKey);
+                      const pct = Math.round((done / daysInMonth) * 100);
+                      return `
+                        <tr>
+                          <td style="padding:8px; border-bottom:1px solid var(--border);">${escapeHtml(h.name)}</td>
+                          <td style="text-align:center; padding:8px; border-bottom:1px solid var(--border);">${done}/${daysInMonth}</td>
+                          <td style="text-align:center; padding:8px; border-bottom:1px solid var(--border);">${isFinite(pct) ? pct : 0}%</td>
+                        </tr>
+                      `;
+                    })
+                    .join("")
+                : `<tr><td colspan="3" style="padding:10px; opacity:.7;">No habits yet.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function getDaysInMonth(monthKey /* YYYY-MM */) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+function countHabitDoneInMonth(state, habitId, monthKey /* YYYY-MM */) {
+  let count = 0;
+  const days = getDaysInMonth(monthKey);
+  for (let day = 1; day <= days; day++) {
+    const d = `${monthKey}-${String(day).padStart(2, "0")}`;
+    if (state.completedByDate?.[d]?.[habitId]) count++;
+  }
+  return count;
+}
+
+function monthLabel(monthKey /* YYYY-MM */) {
+  const [y, m] = monthKey.split("-");
+  return new Date(`${y}-${m}-01T00:00:00`).toLocaleString(undefined, { month: "long" });
+}
+
 function renderHabitsGrid(state, ui, dates) {
   return `
     <div style="overflow:auto; border:1px solid #e5e7eb; border-radius:10px; background:#fff;">
