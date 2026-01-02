@@ -858,7 +858,8 @@ function renderHabits() {
               <th style="padding:10px; text-align:center; border-bottom:1px solid #e5e7eb;">Delete</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="habitsTbody">
+
             ${
               state.habits.length
                 ? state.habits.map((h) => habitRowGridHTML(h, state, dates)).join("")
@@ -968,6 +969,8 @@ function renderHabits() {
       });
     }
   });
+  enableHabitsDrag(state);
+
 }
 
 // ---- Habits storage
@@ -993,26 +996,80 @@ function saveHabitsState(state) {
 // ---- Habits grid helpers
 function habitRowGridHTML(habit, state, dates) {
   return `
-    <tr>
-      <td style="padding:10px; position:sticky; left:0; background:#fff; border-bottom:1px solid #f1f5f9;">
+    <tr data-habit-id="${habit.id}">
+      <td style="padding:10px; position:sticky; left:0; background:var(--card); border-bottom:1px solid var(--border);">
+        <span
+          draggable="true"
+          data-drag-habit-id="${habit.id}"
+          title="Drag to reorder"
+          style="display:inline-block; padding-right:10px; cursor:grab; opacity:.75; user-select:none;"
+        >⋮⋮</span>
         ${escapeHtml(habit.name)}
       </td>
+
       ${dates
         .map((d) => {
           const checked = !!state.completedByDate?.[d]?.[habit.id];
           return `
-            <td style="text-align:center; padding:10px; border-bottom:1px solid #f1f5f9;">
+            <td style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">
               <input id="habit-${habit.id}-${d}" type="checkbox" ${checked ? "checked" : ""} />
             </td>
           `;
         })
         .join("")}
-      <td style="text-align:center; padding:10px; border-bottom:1px solid #f1f5f9;">
+
+      <td style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">
         <button id="habit-del-${habit.id}" style="background:#ef4444; color:white;">Delete</button>
       </td>
     </tr>
   `;
 }
+function enableHabitsDrag(state) {
+  const tbody = document.getElementById("habitsTbody");
+  if (!tbody) return;
+
+  // Start drag only from the handle
+  tbody.querySelectorAll("[data-drag-habit-id]").forEach((handle) => {
+    handle.addEventListener("dragstart", (e) => {
+      const id = handle.getAttribute("data-drag-habit-id");
+      if (!id) return;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", id);
+    });
+  });
+
+  // Drop onto rows
+  tbody.querySelectorAll("tr[data-habit-id]").forEach((row) => {
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      row.classList.add("habit-drag-over");
+    });
+
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("habit-drag-over");
+    });
+
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      row.classList.remove("habit-drag-over");
+
+      const fromId = e.dataTransfer.getData("text/plain");
+      const toId = row.getAttribute("data-habit-id");
+      if (!fromId || !toId || fromId === toId) return;
+
+      const fromIndex = state.habits.findIndex((h) => h.id === fromId);
+      const toIndex = state.habits.findIndex((h) => h.id === toId);
+      if (fromIndex < 0 || toIndex < 0) return;
+
+      const [moved] = state.habits.splice(fromIndex, 1);
+      state.habits.splice(toIndex, 0, moved);
+
+      saveHabitsState(state);
+      renderHabits();
+    });
+  });
+}
+
 
 function getWeekDates(anchorKey) {
   const d = new Date(anchorKey + "T00:00:00");
@@ -2227,4 +2284,3 @@ function hideSnackbar() {
   _snack.undoFn = null;
   _snack.el.classList.remove("show");
 }
-
