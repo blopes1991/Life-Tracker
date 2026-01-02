@@ -407,122 +407,192 @@ function renderWeight() {
       return;
     }
   
-    // UI state for month collapse
-    const ui = getWeightUIState();
-    ui.monthOpen ??= {};
-  
-    // newest first for display
-    const display = [...data].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  
-    // group by monthKey = YYYY-MM
-    const groups = {};
-    display.forEach((w) => {
-      const monthKey = String(w.date || "").slice(0, 7);
-      const key = /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : "Unknown";
-      groups[key] ??= [];
-      groups[key].push(w);
-    });
-  
-    const monthKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
-    const idSafe = (key) => String(key).replace(/[^a-zA-Z0-9_-]/g, "_");
-  
-    // default: newest month open, others closed (only if never set before)
+    // UI state for year/month collapse
+const ui = getWeightUIState();
+ui.yearOpen ??= {};
+ui.monthOpen ??= {};
+
+// newest first for display
+const display = [...data].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+// group by year -> month
+const years = {}; // { "2025": { "2025-12": [entries...] } }
+display.forEach((w) => {
+  const y = String(w.date || "").slice(0, 4);
+  const yearKey = /^\d{4}$/.test(y) ? y : "Unknown";
+
+  const m = String(w.date || "").slice(0, 7);
+  const monthKey = /^\d{4}-\d{2}$/.test(m) ? m : "Unknown";
+
+  years[yearKey] ??= {};
+  years[yearKey][monthKey] ??= [];
+  years[yearKey][monthKey].push(w);
+});
+
+const yearKeys = Object.keys(years).sort((a, b) => b.localeCompare(a));
+const idSafe = (key) => String(key).replace(/[^a-zA-Z0-9_-]/g, "_");
+
+const monthLabelFromKey = (monthKey) => {
+  if (monthKey === "Unknown") return "Unknown Month";
+  const d = new Date(monthKey + "-01T00:00:00");
+  return d.toLocaleString(undefined, { month: "long", year: "numeric" });
+};
+
+// defaults (only if never set before)
+if (yearKeys.length && ui.yearOpen[yearKeys[0]] == null) {
+  yearKeys.forEach((k, idx) => {
+    if (ui.yearOpen[k] == null) ui.yearOpen[k] = idx === 0; // open newest year
+  });
+  saveWeightUIState(ui);
+}
+
+// render Year folders, containing Month folders
+list.innerHTML = yearKeys
+  .map((yearKey) => {
+    const ySafe = idSafe(yearKey);
+    const yearOpen = ui.yearOpen[yearKey] ?? true;
+
+    const monthKeys = Object.keys(years[yearKey]).sort((a, b) => b.localeCompare(a));
+
+    // default month open settings if missing (open newest month inside newest year)
     if (monthKeys.length && ui.monthOpen[monthKeys[0]] == null) {
-      monthKeys.forEach((k, idx) => {
-        if (ui.monthOpen[k] == null) ui.monthOpen[k] = idx === 0;
+      monthKeys.forEach((mk, idx) => {
+        if (ui.monthOpen[mk] == null) ui.monthOpen[mk] = yearOpen && idx === 0;
       });
       saveWeightUIState(ui);
     }
-  
-    const monthLabelFromKey = (monthKey) => {
-      if (monthKey === "Unknown") return "Unknown Month";
-      const d = new Date(monthKey + "-01T00:00:00");
-      return d.toLocaleString(undefined, { month: "long", year: "numeric" });
-    };
-  
-    // render month folders
-    list.innerHTML = monthKeys
+
+    const monthsHTML = monthKeys
       .map((monthKey) => {
-        const safe = idSafe(monthKey);
+        const mSafe = idSafe(monthKey);
         const isOpen = ui.monthOpen[monthKey] ?? true;
-  
-        const rows = groups[monthKey]
+
+        const rows = years[yearKey][monthKey]
           .map(
             (w) => `
-            <div style="border:1px solid #ddd; border-radius:8px; padding:10px; background:#fff; display:grid; gap:8px;">
-              <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-                <div>
-                  <b>${escapeHtml(w.date)}</b>
-                  <span style="opacity:.8;">—</span>
-                  <span>${w.weight}</span>
+              <div style="border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--card); display:grid; gap:8px;">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+                  <div>
+                    <b>${escapeHtml(w.date)}</b>
+                    <span style="opacity:.8;">—</span>
+                    <span>${w.weight}</span>
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <button id="weight-edit-${w.id}">Edit</button>
+                    <button id="weight-del-${w.id}" style="background:#ef4444; color:white;">Delete</button>
+                  </div>
                 </div>
-                <div style="display:flex; gap:8px;">
-                  <button id="weight-edit-${w.id}">Edit</button>
-                  <button id="weight-del-${w.id}" style="background:#ef4444; color:white;">Delete</button>
+
+                <div id="weight-editrow-${w.id}" style="display:none; gap:8px; align-items:end; flex-wrap:wrap;">
+                  <label style="display:grid; gap:4px;">
+                    <span style="font-size:12px; opacity:.8;">Date</span>
+                    <input id="weight-editdate-${w.id}" type="date" value="${escapeHtml(w.date)}" />
+                  </label>
+                  <label style="display:grid; gap:4px;">
+                    <span style="font-size:12px; opacity:.8;">Weight</span>
+                    <input id="weight-editval-${w.id}" type="number" inputmode="decimal" value="${w.weight}" />
+                  </label>
+                  <button id="weight-save-${w.id}">Save</button>
+                  <button id="weight-cancel-${w.id}">Cancel</button>
                 </div>
               </div>
-  
-              <div id="weight-editrow-${w.id}" style="display:none; gap:8px; align-items:end; flex-wrap:wrap;">
-                <label style="display:grid; gap:4px;">
-                  <span style="font-size:12px; opacity:.8;">Date</span>
-                  <input id="weight-editdate-${w.id}" type="date" value="${escapeHtml(w.date)}" />
-                </label>
-                <label style="display:grid; gap:4px;">
-                  <span style="font-size:12px; opacity:.8;">Weight</span>
-                  <input id="weight-editval-${w.id}" type="number" inputmode="decimal" value="${w.weight}" />
-                </label>
-                <button id="weight-save-${w.id}">Save</button>
-                <button id="weight-cancel-${w.id}">Cancel</button>
-              </div>
-            </div>
-          `
+            `
           )
           .join("");
-  
+
         return `
-          <li style="list-style:none; border:1px solid #e5e7eb; border-radius:12px; background:#fff; overflow:hidden;">
+          <div style="border:1px solid var(--border); border-radius:12px; background:var(--card); overflow:hidden;">
             <div
-              id="wt-month-${safe}"
-              style="padding:10px 12px; background:#f3f4f6; font-weight:700; cursor:pointer;
+              id="wt-month-${mSafe}"
+              style="padding:10px 12px; background:color-mix(in srgb, var(--card) 75%, var(--border)); font-weight:700; cursor:pointer;
                      display:flex; align-items:center; justify-content:space-between; gap:10px; user-select:none;"
             >
               <span>
                 ${escapeHtml(monthLabelFromKey(monthKey))}
-                <span style="font-weight:400; opacity:.75;"> (${groups[monthKey].length})</span>
+                <span style="font-weight:400; opacity:.75;"> (${years[yearKey][monthKey].length})</span>
               </span>
-              <span id="wt-caret-${safe}" style="opacity:.75; font-weight:700;">
+              <span id="wt-caret-${mSafe}" style="opacity:.75; font-weight:700;">
                 ${isOpen ? "▾" : "▸"}
               </span>
             </div>
-  
+
             <div
-              id="wt-body-${safe}"
+              id="wt-body-${mSafe}"
               style="padding:10px 12px; display:${isOpen ? "grid" : "none"}; gap:10px;"
             >
               ${rows}
             </div>
-          </li>
+          </div>
         `;
       })
       .join("");
-  
-    // toggle month open/closed (no full rerender needed)
-    monthKeys.forEach((monthKey) => {
-      const safe = idSafe(monthKey);
-      const header = document.getElementById(`wt-month-${safe}`);
-      const body = document.getElementById(`wt-body-${safe}`);
-      const caret = document.getElementById(`wt-caret-${safe}`);
-  
-      header?.addEventListener("click", () => {
-        const nextOpen = !(ui.monthOpen[monthKey] ?? true);
-        ui.monthOpen[monthKey] = nextOpen;
-  
-        if (body) body.style.display = nextOpen ? "grid" : "none";
-        if (caret) caret.textContent = nextOpen ? "▾" : "▸";
-  
-        saveWeightUIState(ui);
-      });
+
+    return `
+      <li style="list-style:none; border:1px solid var(--border); border-radius:12px; background:var(--card); overflow:hidden;">
+        <div
+          id="wt-year-${ySafe}"
+          style="padding:10px 12px; background:color-mix(in srgb, var(--card) 60%, var(--border)); font-weight:800; cursor:pointer;
+                 display:flex; align-items:center; justify-content:space-between; gap:10px; user-select:none;"
+        >
+          <span>
+            ${escapeHtml(yearKey)}
+            <span style="font-weight:400; opacity:.75;"> (${monthKeys.reduce((n, mk) => n + years[yearKey][mk].length, 0)})</span>
+          </span>
+          <span id="wt-year-caret-${ySafe}" style="opacity:.75; font-weight:800;">
+            ${yearOpen ? "▾" : "▸"}
+          </span>
+        </div>
+
+        <div
+          id="wt-year-body-${ySafe}"
+          style="padding:10px 12px; display:${yearOpen ? "grid" : "none"}; gap:10px;"
+        >
+          ${monthsHTML}
+        </div>
+      </li>
+    `;
+  })
+  .join("");
+
+// toggle year open/closed
+yearKeys.forEach((yearKey) => {
+  const ySafe = idSafe(yearKey);
+  const header = document.getElementById(`wt-year-${ySafe}`);
+  const body = document.getElementById(`wt-year-body-${ySafe}`);
+  const caret = document.getElementById(`wt-year-caret-${ySafe}`);
+
+  header?.addEventListener("click", () => {
+    const nextOpen = !(ui.yearOpen[yearKey] ?? true);
+    ui.yearOpen[yearKey] = nextOpen;
+
+    if (body) body.style.display = nextOpen ? "grid" : "none";
+    if (caret) caret.textContent = nextOpen ? "▾" : "▸";
+
+    saveWeightUIState(ui);
+  });
+});
+
+// toggle month open/closed
+yearKeys.forEach((yearKey) => {
+  const monthKeys = Object.keys(years[yearKey]).sort((a, b) => b.localeCompare(a));
+  monthKeys.forEach((monthKey) => {
+    const mSafe = idSafe(monthKey);
+    const header = document.getElementById(`wt-month-${mSafe}`);
+    const body = document.getElementById(`wt-body-${mSafe}`);
+    const caret = document.getElementById(`wt-caret-${mSafe}`);
+
+    header?.addEventListener("click", () => {
+      const nextOpen = !(ui.monthOpen[monthKey] ?? true);
+      ui.monthOpen[monthKey] = nextOpen;
+
+      if (body) body.style.display = nextOpen ? "grid" : "none";
+      if (caret) caret.textContent = nextOpen ? "▾" : "▸";
+
+      saveWeightUIState(ui);
     });
+  });
+});
+
   
     // wire up edit/delete handlers for each entry (works even if month is collapsed)
     display.forEach((w) => {
@@ -566,6 +636,7 @@ function renderWeight() {
     drawWeightChart(data);
     updateWeightProgress();
   }
+
   function getWeightChartUI() {
     return JSON.parse(localStorage.getItem("weightChartUI") || JSON.stringify({ openNoteIds: {} }));
   }
